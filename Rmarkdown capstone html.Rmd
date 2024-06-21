@@ -1,0 +1,429 @@
+---
+title: "Google Data Analytics Capstone project"
+author: "James Broughman"
+date: "2024-06-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# INTRODUCTION
+
+This is a case study of the (fictional) Cyclistic bike-share company using publicly available date from the Divvy bike share program in Chicago. The data analyzed runs from May 2023 to April 2024 and is comprised of 5,738,612 individual data points. After cleaning the data 4,500,704 data points remained and the analysis was based on this data.
+
+The goal of this scenario is to design marketing strategies aimed at converting casual riders into
+annual members by better understanding how annual members and casual riders differ, why casual riders would buy a membership, and how digital media could affect their marketing tactics. 
+
+Three questions will guide the future marketing program:
+1. How do annual members and casual riders use Cyclistic bikes differently?
+2. Why would casual riders buy Cyclistic annual memberships?
+3. How can Cyclistic use digital media to influence casual riders to become members?
+
+The product of this analysis is a report with the following deliverables:
+1. A clear statement of the business task
+2. A description of all data sources used
+3. Documentation of any cleaning or manipulation of data
+4. A summary of your analysis
+5. Supporting visualizations and key findings
+6. Your top three recommendations based on your analysis
+
+N.B. The Bureau of Transportation Statistics maintains a webpage dedicated to analysis of bike share data over several large metropolitan area, including the Divvy bike share program in Chicago at:
+https://data.bts.gov/stories/s/Bikeshare-and-e-scooters-in-the-U-S-/fwcs-jprj/
+
+Divvy Bikes has a dedicated webpage at:
+https://divvybikes.com
+Divvy Bikes’ Terms of Use for data are at
+https://divvybikes.com/data-license-agreement and are included at the end of this document in case the link to the data changes.
+
+# Preparation
+
+R version 4.3.3 (2024-02-29 ucrt) -- "Angel Food Cake"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+
+## Load required libraries for data analysis
+
+The first step is to load all required libraries. Data analysis will be performed using the tidy data analysis principles.
+
+```{r load required packages, echo = FALSE}
+library(matrixStats)
+library(tidyverse)
+library(bootstrap)
+library(pracma)
+library(stringr)
+library(trajr)
+library(data.table)
+library(lubridate)
+library(smooth)
+library(zoo)
+library(magrittr)
+library(DAAG)
+library(viridis)
+library(Tmisc)
+library(SimDesign)
+library(skimr)
+library(janitor)
+library(tinytex)
+library(rmarkdown)
+library(devtools)
+library(scales)
+library(gdata)
+library(chron)
+library(readr)
+library(psych)
+library(hrbrthemes)
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(RColorBrewer)
+```
+
+## Read the required data from csv files
+
+The csv files with the monthly data have been downloaded into the working directory from the company website.
+
+```{r Import data}
+df_202305 <- read.csv("data/202305-divvy-tripdata.csv")
+df_202306 <- read.csv("data/202306-divvy-tripdata.csv")
+df_202307 <- read.csv("data/202307-divvy-tripdata.csv")
+df_202308 <- read.csv("data/202308-divvy-tripdata.csv")
+df_202309 <- read.csv("data/202309-divvy-tripdata.csv")
+df_202310 <- read.csv("data/202310-divvy-tripdata.csv")
+df_202311 <- read.csv("data/202311-divvy-tripdata.csv")
+df_202312 <- read.csv("data/202312-divvy-tripdata.csv")
+df_202401 <- read.csv("data/202401-divvy-tripdata.csv")
+df_202402 <- read.csv("data/202402-divvy-tripdata.csv")
+df_202403 <- read.csv("data/202403-divvy-tripdata.csv")
+df_202404 <- read.csv("data/202404-divvy-tripdata.csv")
+```
+
+## Verify data
+
+The data will be verified using column names.  The following items should be identical for all 12 files. 
+
+```{r Verify data}
+colnames(df_202305)
+colnames(df_202306)
+colnames(df_202307)
+colnames(df_202308)
+colnames(df_202309)
+colnames(df_202310)
+colnames(df_202311)
+colnames(df_202312)
+colnames(df_202401)
+colnames(df_202402)
+colnames(df_202403)
+colnames(df_202404)
+```
+
+## Concatenate data
+
+Concatenate the data into one file
+```{r concatenate data}
+df_all <- rbind(df_202305, df_202306, df_202307, df_202308, df_202309, df_202310,
+                df_202311, df_202312, df_202401, df_202402, df_202403, df_202404)
+```
+
+## Write data to csv file
+
+Write the raw data file to a csv file so we can skip the time consuming steps above when reanalyzing the data
+```{r Write csv of complete data set}
+write.csv(df_all, file = "data/df_all.csv",row.names = FALSE)
+```
+
+## Assess data
+
+Next, assess the data to plan the analysis
+```{r Assess data}
+str(df_all)
+head(df_all)
+tail(df_all)
+dim(df_all)
+summary(df_all)
+names(df_all)
+```
+
+## Clean data
+
+Clean the data for the analysis by finding the columns with NA values, selecting complete cases only, and filtering out NA, missing, empty data and rows with the starting time later than the ending time. Rename columns for easier readability. N.B. this section of codes (and the next) take several minutes to complete.
+
+```{r clean data}
+colSums(is.na(df_all))
+cleaned_df_all <- df_all[complete.cases(df_all), ]
+cleaned_df_all <- distinct(cleaned_df_all)
+cleaned_df_all<- cleaned_df_all %>% 
+  filter(started_at < ended_at)
+cleaned_df_all <- drop_na(cleaned_df_all)
+cleaned_df_all <- remove_empty(cleaned_df_all)
+cleaned_df_all <- remove_missing(cleaned_df_all)
+colSums(is.na(cleaned_df_all))
+cleaned_df_all <- rename(cleaned_df_all, user_type = member_casual, bike_type = rideable_type)
+head(cleaned_df_all)
+```
+
+Separate the date into date, day, month, year for better analysis, Separate column for time, determine ride length and add column and delete rows with times less than 5 minutes or more than 1 day
+
+```{r separate date and find ride length}
+cleaned_df_all$date <- as.Date(cleaned_df_all$started_at)
+cleaned_df_all$week_day <- format(as.Date(cleaned_df_all$date), "%A")
+cleaned_df_all$day <- format(cleaned_df_all$date, "%d")
+cleaned_df_all$month <- format(as.Date(cleaned_df_all$date), "%b")
+cleaned_df_all$year <- format(cleaned_df_all$date, "%Y")
+cleaned_df_all$time <- as.POSIXct(cleaned_df_all$started_at, format = "%Y-%m-%d %H:%M:%S")
+cleaned_df_all$time <- format(cleaned_df_all$time, format = "%H:%M")
+cleaned_df_all <- separate(cleaned_df_all, time, into = c("hour", "minute"), 
+                           sep = ":", remove = FALSE)
+cleaned_df_all$ride_length <- difftime(cleaned_df_all$ended_at, 
+                                       cleaned_df_all$started_at, units = "mins")
+cleaned_df_all <- cleaned_df_all[!cleaned_df_all$ride_length>1440,] 
+cleaned_df_all <- cleaned_df_all[!cleaned_df_all$ride_length<5,] 
+```
+
+Write the data to a csv file Save the cleaned data
+```{r Write cleaned data to csv file}
+write.csv(cleaned_df_all, file = "data/cleaned_df_all.csv", row.names = FALSE)
+```
+
+## Select specific columns for data analysis
+
+Select specific columns from the data for analysis
+```{r select columns for analysis}
+cleaned_df_selected <- cleaned_df_all %>% 
+  select(bike_type, user_type, hour, time, day, month, year, started_at, week_day, ride_length)
+```
+
+## Save the cleaned data
+
+Write the data with selected columns to a csv file
+```{r Write  selected data to csv file}
+write.csv(cleaned_df_selected, file = "data/cleaned_df_selected.csv", row.names = FALSE)
+```
+
+## Convert char data to numeric or date/time
+
+Make numeric columns numeric
+```{r make numeric columns numeric}
+cleaned_df_selected$hour <- as.numeric(cleaned_df_selected$hour)
+cleaned_df_selected$bike_type <- as.factor(cleaned_df_selected$bike_type)
+cleaned_df_selected$user_type <- as.factor(cleaned_df_selected$user_type)
+cleaned_df_selected$day <- as.factor(cleaned_df_selected$day)
+cleaned_df_selected$month <- as.factor(cleaned_df_selected$month)
+cleaned_df_selected$week_day <- as.factor(cleaned_df_selected$week_day)
+cleaned_df_selected$time <- str_split_fixed(cleaned_df_selected$time,  ':' , 2)
+colnames(cleaned_df_selected)
+```
+
+## Order the data
+
+```{r order data}
+cleaned_df_selected$month <- ordered(cleaned_df_selected$month, 
+                        levels=c("May", "Jun", "Jul", "Aug", "Sep","Oct", 
+                        "Nov", "Dec", "Jan", "Feb", "Mar", "Apr"))
+cleaned_df_selected$week_day <- ordered(cleaned_df_selected$week_day, 
+                        levels = c("Sunday", "Monday", "Tuesday", "Wednesday",
+                                  "Thursday", "Friday", "Saturday"))
+```
+
+# Analyze the data
+
+Show descriptive statistics on ride length
+```{r show descriptive stats on ride length}
+dstats_ride_length <- describe(as.numeric(cleaned_df_selected$ride_length, fast=TRUE))
+dstats_ride_length
+```
+
+Determine total no. of users by day of week
+```{r Determine total no. of users by day of week}
+df01 <- table(cleaned_df_selected$week_day)
+write.csv(df01, file = "data/df01.csv",row.names = FALSE)
+df01
+```
+
+Determine differences between members and casual riders in ride length
+```{r ride_length of members vs casual users}
+df02 <- cleaned_df_selected %>% 
+       group_by(user_type) %>% 
+       summarise(min_length_mins = min(ride_length), max_length_min = max(ride_length),
+                 median_length_mins = median(ride_length), mean_length_min = mean(ride_length))
+write.csv(df02, file = "data/df02.csv",row.names = FALSE)
+df02 
+
+```
+
+Analyze ride length data by user type and weekday
+```{r  ride length data by user type and weekday}
+df03 <-cleaned_df_selected %>% 
+       group_by(week_day, user_type) %>% 
+       summarise(number_of_rides = n(),
+                 avgerage_duration = mean(ride_length),
+                 median_duration = median(ride_length),
+                 max_duration = max(ride_length),
+                 min_duration = min(ride_length))
+write.csv(df03, file = "data/df03.csv",row.names = FALSE)
+df03
+```
+
+Analyze ride length data by user type and month
+```{r ride length data by user type and month}
+df04 <- cleaned_df_selected %>% 
+       group_by(month, user_type) %>% 
+       summarise(number_of_rides = n(),
+                 average_duration = mean(ride_length),
+                 median_duration = median(ride_length),
+                 max_duration = max(ride_length),
+                 min_duration = min(ride_length))
+write.csv(df04, file = "data/df04.csv",row.names = FALSE)
+df04
+
+```
+
+Analyze ride length data by user type and bike type
+```{r ride length data by bike type}
+df05 <- cleaned_df_selected %>% 
+       group_by(bike_type, user_type) %>% 
+       summarise(number_of_rides = n(), 
+                 average_duration = mean(ride_length),
+                 max_duration = max(ride_length),
+                 min_duration = min(ride_length))
+write.csv(df05, file = "data/df05.csv",row.names = FALSE)
+df05
+```
+
+Analyze ride length data by user type and day of month
+```{r ride length data by day of month}
+df06 <- cleaned_df_selected %>% 
+       group_by(day, user_type) %>% 
+       summarise(number_of_rides = n(), 
+                 average_duration = mean(ride_length),
+                 max_duration = max(ride_length),
+                 min_duration = min(ride_length))
+write.csv(df06, file = "data/df06.csv",row.names = FALSE)
+df06
+```
+
+# Data Visualizations and Plots
+
+Plot number of rides per month by user type
+```{r Plot number of rides per month by user type, echo=FALSE}
+cleaned_df_selected %>% 
+  group_by(user_type, month) %>% 
+  summarise(number_of_rides = n(), average_duration = mean(ride_length)) %>% 
+  arrange(user_type, month)  %>% 
+  ggplot(aes(x = month, y = number_of_rides, fill = user_type)) +
+  geom_col(color="black", position=position_dodge()) +  theme_minimal()
+ggsave("data/Fig01_monthly_usage.png", plot = last_plot())
+```
+
+Plot number of rides per day by user type
+```{r Plot number of rides per day by user type, echo=FALSE}
+cleaned_df_selected %>% 
+  group_by(user_type, week_day) %>% 
+  summarise(number_of_rides = n(), average_duration = mean(ride_length)) %>% 
+  arrange(user_type, week_day)  %>% 
+  ggplot(aes(x = week_day, y = number_of_rides, fill = user_type)) +
+  geom_col(color="black", position=position_dodge()) +  theme_minimal()
+ggsave("data/Fig02_daily_perUser.png", plot = last_plot())
+```
+
+Plot number of rides by hour of day grouped by user_type
+```{r Plot number of rides by hour of day grouped by user_type, echo=FALSE}
+cleaned_df_selected %>% 
+  group_by(user_type, hour) %>% 
+  summarise(number_of_rides = n(), average_duration = mean(ride_length)) %>% 
+  arrange(user_type, hour)  %>% 
+  ggplot(aes(x = hour, y = number_of_rides, fill = user_type)) +
+  geom_col(color="black", position=position_dodge()) +  theme_minimal()
+ggsave("data/Fig03_ridesPerHour.png", plot = last_plot())
+```
+
+Plot number of rides by bike_type grouped by user_type
+```{r Plot number of rides by bike_type grouped by user_type, echo=FALSE}
+cleaned_df_selected %>% 
+  group_by(bike_type, user_type) %>% 
+  summarise(number_of_rides = n(), average_duration = mean(ride_length)) %>% 
+  arrange(user_type, bike_type)  %>% 
+  ggplot(aes(x = bike_type, y = number_of_rides, fill = user_type)) +
+  geom_col(color="black", position=position_dodge()) +  theme_minimal()
+ggsave("data/Fig04_bikeTypeByUser.png", plot = last_plot())
+```
+
+
+Save the final cleaned and tidy data to csv file
+```{r write final cleaned and tidy data to csv file}
+write.csv(cleaned_df_selected, file = "data/cleaned_df_selected_final.csv",row.names = FALSE)
+```
+
+# Final report
+
+### Restated business task
+
+To design marketing strategies aimed at converting casual riders into
+annual members by better understanding how annual members and casual riders differ, why casual riders would buy a membership, and how digital media could affect their marketing tactics. 
+
+### Description of all data sources used
+
+All data came from the publicly available rideshare data on the Divvy website.  See above for specific data file names.
+
+### Documentation of any cleaning or manipulation of data
+
+Raw data files were concatenated into one large file with over 5.7 million rows of data,  Rows with NA values, blank,  duplicate and empty cells were deleted (i.e. only complete cases were retained). The time date columns (started_at, ended_at) were converted from character to date format and ride times less than 5 minutes or more than 1440 minutes (1 day) were deleted. This left just over 4.5 million rows of data. Dates were separated into individual components for easier analysis and converted from character to factor format.  Finally a new data frame was made with only the columns needed for analysis. A csv file of each step was saved to the working directory.
+
+### A summary of your analysis
+
+* The summer months (May – Sep) have the highest ridership for both members and casual users. The lowest are Nov - Mar, probably due to the harsh weather in the Chicago area.
+
+* Members and casual users have equal numbers of rides on the weekend, but members are much higher during the week.
+
+* Members have consistent ride length over the course to the week.  Casual users take longer rides than members and longer rides on the weekends.
+
+* Members peak ride times are from 6:00 am to 5:00 pm, many probably use the service to get to a specific destination such as work to avoid traffic.
+
+* The usage of electric vs classic bikes is split evenly for both members and casual users.
+
+* The average trip duration is approximately twice as much for casual users than for members.
+
+
+### Supporting visualizations and key findings
+
+See above in the data visualization section
+
+### Your top three recommendations based on your analysis
+
+* Provide promotions for specific tourist destinations on the lower usage days for members and casual users to get to tourist/shopping destinations.
+
+* Offer hot chocolate or coffee at the busiest turn in destinations in the winter months
+
+* Collect age and gender data to make more specific and targeted recommendations
+
+* Passports can be issued with specific stamps given at various destinations and turn-in locations
+
+### Final remarks
+Sadly, during the preparation of this case study (June 2024), the local Houston, TX bicycle ride share program announced that it would be shutting down this summer.
+
+# Appendix A
+
+## Data License Agreement
+
+Lyft Bikes and Scooters, LLC (“Bikeshare”) operates the City of Chicago’s (“City”) Divvy bicycle sharing service. Bikeshare and the City are committed to supporting bicycling as an alternative transportation option. As part of that commitment, the City permits Bikeshare to make certain Divvy system data owned by the City (“Data”) available to the public, subject to the terms and conditions of this License Agreement (“Agreement”). By accessing or using any of the Data, you agree to all of the terms and conditions of this Agreement.
+
+License. Bikeshare hereby grants to you a non-exclusive, royalty-free, limited, perpetual license to access, reproduce, analyze, copy, modify, distribute in your product or service and use the Data for any lawful purpose (“License”).
+Prohibited Conduct. The License does not authorize you to do, and you will not do or assist others in doing, any of the following
+
+Use the Data in any unlawful manner or for any unlawful purpose;
+Host, stream, publish, distribute, sublicense, or sell the Data as a stand-alone dataset; provided, however, you may include the Data as source material, as applicable, in analyses, reports, or studies published or distributed for non-commercial purposes;
+Access the Data by means other than the interface Bikeshare provides or authorizes for that purpose;
+Circumvent any access restrictions relating to the Data;
+Use data mining or other extraction methods in connection with Bikeshare's website or the Data;
+Attempt to correlate the Data with names, addresses, or other information of customers or Members of Bikeshare; and
+State or imply that you are affiliated, approved, endorsed, or sponsored by Bikeshare.
+Use or authorize others to use, without the written permission of the applicable owners, the trademarks or trade names of Lyft Bikes and Scooters, LLC, the City of Chicago or any sponsor of the Divvy service. These marks include, but are not limited to DIVVY, and the DIVVY logo, which are owned by the City of Chicago.
+No Warranty. THE DATA IS PROVIDED “AS IS,” AS AVAILABLE (AT BIKESHARE’S SOLE DISCRETION) AND AT YOUR SOLE RISK. TO THE MAXIMUM EXTENT PROVIDED BY LAW BIKESHARE DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING THE IMPLIED WARRANTIES OF MERCHANTABILITY FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. BIKESHARE FURTHER DISCLAIMS ANY WARRANTY THAT THE DATA WILL MEET YOUR NEEDS OR WILL BE OR CONTINUE TO BE AVAILABLE, COMPLETE, ACCURATE, TIMELY, SECURE, OR ERROR FREE.
+
+Limitation of Liability and Covenant Not to Sue. Bikeshare, its parent, affiliates and sponsors, and their respective directors, officers, employees, or agents will not be liable to you or anyone else for any loss or damage, including any direct, indirect, incidental, and consequential damages, whether foreseeable or not, based on any theory of liability, resulting in whole or in part from your access to or use of the Data. You will not bring any claim for damages against any of those persons or entities in any court or otherwise arising out of or relating to this Agreement, the Data, or your use of the Data. In any event, if you were to bring and prevail on such a claim, your maximum recovery is limited to $100 in the aggregate even if you or they had been advised of the possibility of liability exceeding that amount.
+Ownership and Provision of Data. The City of Chicago owns all right, title, and interest in the Data. Bikeshare may modify or cease providing any or all of the Data at any time, without notice, in its sole discretion.
+No Waiver. Nothing in this Agreement is or implies a waiver of any rights Bikeshare or the City of Chicago has in the Data or in any copyrights, patents, or trademarks owned or licensed by Bikeshare, its parent, affiliates or sponsors. The DIVVY trademarks are owned by the City of Chicago.
+Termination of Agreement. Bikeshare may terminate this Agreement at any time and for any reason in its sole discretion. Termination will be effective upon Bikeshare’s transmission of written notice to you at the email address you provided to Bikeshare in connection with this or by Bikeshare's announcement on its website (currently www.divvybikes.com/data that it is revoking all licenses. Sections 2–6 and 9–10 will survive termination.
+Contact. Questions relating to this Agreement, including requests for permission to use trademarks and trade names, should be sent to bike-data@lyft.com.
+Applicable Law and Forum. This Agreement is governed by the laws of the State of Illinois, without regard to conflicts of law principles. Any dispute arising under or relating to this Agreement will be brought only in a court of competent jurisdiction sitting in New York City, New York.
+Entire Agreement. This Agreement is the complete and exclusive agreement and understanding between Bikeshare and you with respect to its subject matter and supersedes all prior or contemporaneous oral or written agreements or understandings relating to the subject matter.
